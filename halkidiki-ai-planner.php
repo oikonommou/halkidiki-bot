@@ -929,7 +929,7 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
             'deny'  => ['bar', 'club', 'hotel', 'villa', 'apartments', 'beach', 'cruise', 'rent', 'water sport'],
         ],
         'brunch' => [
-            'allow' => ['brunch'],
+            'allow' => ['brunch', 'cafe-snacks'],
             'deny'  => ['ταβερν', 'εστιατορ', 'restaurant', 'bar', 'club', 'hotel', 'beach'],
         ],
         'coffee' => [
@@ -959,6 +959,7 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
             $haystack_parts = array_merge($haystack_parts, $item['features']);
         }
 
+        $tax_haystack = halkidiki_ai_normalize_text(implode(' ', $haystack_parts));
         $extra_text = [];
         if (!empty($item['name'])) $extra_text[] = $item['name'];
         if (!empty($item['description'])) $extra_text[] = $item['description'];
@@ -987,7 +988,8 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
             $rule = $strict_rules[$intent_type];
             $allow_ok = false;
             foreach ($rule['allow'] as $allow_kw) {
-                if (strpos($haystack, halkidiki_ai_normalize_text($allow_kw)) !== false) {
+                $allow_target = ($intent_type === 'drink' || $intent_type === 'nightlife') ? $tax_haystack : $haystack;
+                if (strpos($allow_target, halkidiki_ai_normalize_text($allow_kw)) !== false) {
                     $allow_ok = true;
                     break;
                 }
@@ -1004,6 +1006,19 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
             }
             if ($deny_hit) {
                 continue;
+            }
+            if ($intent_type === 'drink' || $intent_type === 'nightlife') {
+                $food_leak_words = ['εστιατορ', 'restaurant', 'seafood', 'ταβερν', 'pizza', 'fast food', 'gyros', 'burger'];
+                $food_leak = false;
+                foreach ($food_leak_words as $w) {
+                    if (strpos($tax_haystack, halkidiki_ai_normalize_text($w)) !== false) {
+                        $food_leak = true;
+                        break;
+                    }
+                }
+                if ($food_leak) {
+                    continue;
+                }
             }
         }
 
@@ -1553,7 +1568,7 @@ function halkidiki_ai_format_business_reply_clean($resolved, $data) {
     if ($resolved['final_region'] !== '' && $resolved['final_intent'] === '') return 'Τι είδους επιλογή ψάχνετε στο/στην ' . $resolved['final_region'] . '; φαγητό, καφέ, ποτό, brunch ή κάτι άλλο;';
     if ($resolved['final_region'] === '' && $resolved['final_intent'] === '') return 'Μπορείτε να μου πείτε περιοχή και τι ακριβώς θέλετε (π.χ. καφέ, φαγητό), για να σας δείξω σωστές επιλογές;';
     $items = $data['businesses'] ?? [];
-    if (empty($items)) return 'Δεν βρήκα διαθέσιμες συνεργαζόμενες επιλογές για αυτό που ζητάτε.';
+    if (empty($items)) return 'Αυτή τη στιγμή δεν εμφανίζονται ακριβείς συνεργαζόμενες επιλογές για αυτό το φίλτρο. Αν θέλετε, μπορώ αμέσως να το ανοίξω σε κοντινά χωριά της ίδιας περιοχής ή να το προσαρμόσουμε λίγο για να σας δείξω ταιριαστές επιλογές.';
     $lines = [];
     if (($data['exact_total'] ?? 0) > 0) {
         $lines[] = 'Για αυτό που αναζητάτε στο ' . $resolved['final_region'] . ', μπορείτε να δείτε:';
@@ -1633,7 +1648,7 @@ function halkidiki_ai_build_planner_dataset_context($dataset, $region = '') {
             $parts[] = $label . ': ' . implode(', ', array_filter($names));
         }
     }
-    if (empty($parts)) return 'Υπάρχουν περιορισμένα διαθέσιμα δεδομένα περιοχής.';
+    if (empty($parts)) return 'Για το απόγευμα προτείνω βόλτα σε κοντινή παραλία, στάση για φωτογραφίες σε σημείο με θέα και χαλαρό περίπατο στο κέντρο του χωριού.';
     return implode(' | ', $parts);
 }
 
