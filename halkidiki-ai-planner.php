@@ -959,7 +959,10 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
             $haystack_parts = array_merge($haystack_parts, $item['features']);
         }
 
-        $haystack = halkidiki_ai_normalize_text(implode(' ', $haystack_parts));
+        $extra_text = [];
+        if (!empty($item['name'])) $extra_text[] = $item['name'];
+        if (!empty($item['description'])) $extra_text[] = $item['description'];
+        $haystack = halkidiki_ai_normalize_text(implode(' ', array_merge($haystack_parts, $extra_text)));
 
         if ($haystack === '') {
             continue;
@@ -1022,6 +1025,28 @@ function halkidiki_ai_rotate_businesses_deterministic($items, $seed_parts) {
         return $items;
     }
     return array_merge(array_slice($items, $offset), array_slice($items, 0, $offset));
+}
+
+function halkidiki_ai_filter_brunch_two_step($items) {
+    if (empty($items)) return [];
+    $brunch_exact = [];
+    foreach ($items as $item) {
+        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []));
+        $h = halkidiki_ai_normalize_text(implode(' ', $parts));
+        if (strpos($h, halkidiki_ai_normalize_text('Brunch')) !== false) {
+            $brunch_exact[] = $item;
+        }
+    }
+    if (!empty($brunch_exact)) return array_values($brunch_exact);
+    $fallback = [];
+    foreach ($items as $item) {
+        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []));
+        $h = halkidiki_ai_normalize_text(implode(' ', $parts));
+        if (strpos($h, halkidiki_ai_normalize_text('Cafe-Snacks')) !== false) {
+            $fallback[] = $item;
+        }
+    }
+    return array_values($fallback);
 }
 
 function halkidiki_ai_debug_log($payload) {
@@ -1319,6 +1344,9 @@ $description = wp_trim_words($description, 18, '...');
 $exact_items = $hydrate_posts($exact_ids, 'exact', $requested_region_name);
 $debug['exact_candidates_before_filter'] = $exact_items;
 $exact_items = halkidiki_ai_filter_businesses_by_intent($exact_items, $intent);
+if (($intent['type'] ?? '') === 'brunch') {
+    $exact_items = halkidiki_ai_filter_brunch_two_step($exact_items);
+}
 $debug['exact_candidates_after_filter'] = $exact_items;
 $before_names = array_map(function($i){ return $i['name'] ?? ''; }, $debug['exact_candidates_before_filter']);
 $after_names = array_map(function($i){ return $i['name'] ?? ''; }, $debug['exact_candidates_after_filter']);
@@ -1347,6 +1375,9 @@ $exact_count = count($exact_items);
 
 $nearby_items = $hydrate_posts($nearby_ids, 'nearby', $requested_region_name);
 $nearby_items = halkidiki_ai_filter_businesses_by_intent($nearby_items, $intent);
+if (($intent['type'] ?? '') === 'brunch') {
+    $nearby_items = halkidiki_ai_filter_brunch_two_step($nearby_items);
+}
 $nearby_items = array_values(array_filter($nearby_items, function($item) use ($nearby_region_names) {
     $dr = $item['display_region'] ?? '';
     if ($dr === '') return false;
@@ -2102,7 +2133,8 @@ function halkidiki_ai_chat_endpoint(WP_REST_Request $request) {
             $planner = halkidiki_ai_build_planner_reply_clean($message, $pending_context);
             $reply = $planner['reply'];
             $out_pending = $planner['pending'];
-            $out_planner = ['active'=>false,'type'=>''];
+            $needs_more_planner_input = !empty($out_pending['pending_intent']) && $out_pending['pending_intent'] === 'planner';
+            $out_planner = $needs_more_planner_input ? ['active'=>true,'type'=>'day_plan'] : ['active'=>false,'type'=>''];
             break;
         case 'business_clarification':
         case 'business_reply':
