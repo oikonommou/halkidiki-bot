@@ -1560,14 +1560,19 @@ function halkidiki_ai_format_business_reply_clean($resolved, $data) {
     } else {
         $lines[] = 'Στην ' . $resolved['final_region'] . ' δεν βρήκα ακριβώς ταιριαστές συνεργαζόμενες επιλογές, αλλά μπορείτε να δείτε κοντινές επιλογές:';
     }
+    $chunks = [];
     foreach (array_slice($items, 0, 6) as $b) {
         $name = html_entity_decode((string)($b['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $desc = halkidiki_ai_clean_business_description($b, $resolved['final_intent'] ?? '', $resolved['final_region'] ?? '');
         if (($b['match_scope'] ?? '') === 'nearby') {
-            $lines[] = '- Κοντινή επιλογή στην ' . ($b['display_region'] ?? '') . ': ' . $name . ' — ' . $desc;
+            $chunks[] = 'Κοντινή επιλογή στην ' . ($b['display_region'] ?? '') . ': ' . $name . ' — ' . $desc;
         } else {
-            $lines[] = '- ' . $name . ' — ' . $desc;
+            $chunks[] = $name . ' — ' . $desc;
         }
+    }
+    if (!empty($chunks)) {
+        $lines[] = implode(' Επίσης, ', $chunks) . '.';
+        $lines[] = 'Αν θέλετε, μπορώ να σας το προσαρμόσω πιο πολύ σε ύφος παρέας, ζευγαριού ή πιο χαλαρής εξόδου.';
     }
     return implode("\n", $lines);
 }
@@ -1595,7 +1600,10 @@ function halkidiki_ai_clean_business_description($business, $intent, $region) {
 
 function halkidiki_ai_detect_smalltalk($message) {
     $n = halkidiki_ai_normalize_text($message);
-    $patterns = ['γεια','γεια σου','γεια σας','καλημερα','καλησπερα','ευχαριστω','ευχαριστω πολυ','τελεια','οκ','okay','thanks','thank you'];
+    $trimmed = trim($n);
+    $short_smalltalk = ['γεια','γεια σου','γεια σας','καλημερα','καλησπερα','ευχαριστω','ευχαριστω πολυ','τελεια','οκ','okay','thanks','thank you'];
+    if (in_array($trimmed, $short_smalltalk, true)) return true;
+    $patterns = ['ευχαριστω', 'thanks', 'thank you'];
     foreach ($patterns as $p) {
         if (strpos($n, $p) !== false) return true;
     }
@@ -1647,8 +1655,12 @@ function halkidiki_ai_build_planner_reply_clean($message, $pending_context = [])
     if (strpos($msg_norm, 'χαλαρ') !== false) $planner_answers['style'] = 'relaxed';
     if (strpos($msg_norm, 'οικογεν') !== false || strpos($msg_norm, 'kids') !== false) $planner_answers['group'] = 'family';
 
-    if ($region_name === '' || !isset($planner_answers['car']) || empty($planner_answers['style']) || empty($planner_answers['group'])) {
-        return ['reply' => 'Για να σας ετοιμάσω σωστό πρόγραμμα ημέρας, πείτε μου σύντομα: από ποιο χωριό ξεκινάτε, αν έχετε αυτοκίνητο και τι ύφος προτιμάτε (χαλαρό, παραλία, sightseeing, οικογενειακό, ζευγάρι ή βραδινό).', 'pending' => ['pending_region' => $region_name, 'pending_intent' => 'planner', 'planner_answers' => $planner_answers]];
+    if (strpos($msg_norm, 'ζευγαρ') !== false || strpos($msg_norm, 'couple') !== false) $planner_answers['group'] = 'couple';
+    if (strpos($msg_norm, 'παρεα') !== false || strpos($msg_norm, 'friends') !== false) $planner_answers['group'] = 'friends';
+    if (strpos($msg_norm, 'παραλι') !== false || strpos($msg_norm, 'beach') !== false) $planner_answers['style'] = 'beach';
+
+    if ($region_name === '') {
+        return ['reply' => 'Πείτε μου μόνο από ποια περιοχή ξεκινάτε και αναλαμβάνω τα υπόλοιπα. Αν δεν μου δώσετε άλλο στοιχείο, θα σας ετοιμάσω εγώ μια ισορροπημένη πρόταση ημέρας με παραλία, φαγητό και βραδινή ιδέα.', 'pending' => ['pending_region' => '', 'pending_intent' => 'planner', 'planner_answers' => $planner_answers]];
     }
     $food = halkidiki_ai_query_businesses_clean($region_name, 'food');
     $drink = halkidiki_ai_query_businesses_clean($region_name, 'drink');
@@ -1674,6 +1686,9 @@ function halkidiki_ai_build_planner_reply_clean($message, $pending_context = [])
     $reply .= "\n\nΒράδυ:\n";
     $reply .= !empty($drink_names) ? ('Για ποτό μπορείτε να δείτε: ' . implode(', ', $drink_names) . '.') : 'Κλείστε τη μέρα με μια χαλαρή βόλτα και ποτό στην περιοχή.';
     if ($style !== '') $reply .= "\n\nΈλαβα υπόψη και την προτίμησή σας για: {$style}.";
+    if (empty($planner_answers['group']) || !isset($planner_answers['car'])) {
+        $reply .= "\n\nΑν θέλετε, πείτε μου και αν έχετε αυτοκίνητο ή αν προτιμάτε πιο ζωντανή/πιο ήρεμη ροή, για να το κάνω ακόμη πιο ταιριαστό.";
+    }
     $reply .= "\n\nΑν θέλετε, μπορώ να το κάνω και πιο χαλαρό, πιο οικογενειακό ή πιο βραδινό.";
     return ['reply' => $reply, 'pending' => ['pending_region' => '', 'pending_intent' => '', 'planner_answers' => []]];
 }
