@@ -137,6 +137,26 @@ function halkidiki_ai_detect_region_canonical($message, $regions_map) {
     return halkidiki_ai_detect_region_from_message($message, $regions_map);
 }
 
+
+function halkidiki_ai_deterministic_rotate_items($items, $seed_source = '') {
+    if (!is_array($items) || count($items) <= 1) {
+        return $items;
+    }
+
+    $seed = halkidiki_ai_normalize_text((string) $seed_source);
+    if ($seed === '') {
+        $seed = date('Y-m-d');
+    }
+
+    $offset = abs(crc32($seed . '|' . date('Y-m-d'))) % count($items);
+
+    if ($offset === 0) {
+        return $items;
+    }
+
+    return array_merge(array_slice($items, $offset), array_slice($items, 0, $offset));
+}
+
 function halkidiki_ai_limit_history($history, $max = 6) {
     if (!is_array($history)) {
         return [];
@@ -911,6 +931,32 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
 
     $keywords = [];
 
+    if (($intent['type'] ?? '') === 'brunch') {
+        $brunch_only = [];
+        $cafe_snack_fallback = [];
+
+        foreach ($items as $item) {
+            $cats = !empty($item['categories']) && is_array($item['categories']) ? $item['categories'] : [];
+            $feats = !empty($item['features']) && is_array($item['features']) ? $item['features'] : [];
+            $hay = halkidiki_ai_normalize_text(implode(' ', array_merge($cats, $feats)));
+            if ($hay === '') {
+                continue;
+            }
+
+            if (strpos($hay, halkidiki_ai_normalize_text('Brunch')) !== false) {
+                $brunch_only[] = $item;
+                continue;
+            }
+
+            if (strpos($hay, halkidiki_ai_normalize_text('Cafe-Snacks')) !== false) {
+                $cafe_snack_fallback[] = $item;
+            }
+        }
+
+        return !empty($brunch_only) ? array_values($brunch_only) : array_values($cafe_snack_fallback);
+    }
+
+
     if (!empty($intent['category_keywords']) && is_array($intent['category_keywords'])) {
         $keywords = array_merge($keywords, $intent['category_keywords']);
     }
@@ -1256,6 +1302,7 @@ $after_names = array_map(function($i){ return $i['name'] ?? ''; }, $debug['exact
 $debug['exact_removed_by_intent_filter'] = array_values(array_diff($before_names, $after_names));
 $offset = is_array($context) ? (int) ($context['offset'] ?? 0) : 0;
 $exact_total = count($exact_items);
+$exact_items = halkidiki_ai_deterministic_rotate_items($exact_items, ($message ?? '') . '|' . $requested_region_name . '|' . ($intent['type'] ?? ''));
 $exact_items = array_slice($exact_items, $offset, 6);
 
 $results = array_merge($results, $exact_items);
@@ -1285,6 +1332,7 @@ $nearby_items = array_values(array_filter($nearby_items, function($item) use ($n
     return false;
 }));
 $debug['nearby_candidates_after_filter'] = $nearby_items;
+$nearby_items = halkidiki_ai_deterministic_rotate_items($nearby_items, ($message ?? '') . '|nearby|' . $requested_region_name . '|' . ($intent['type'] ?? ''));
 $nearby_items = array_slice($nearby_items, $offset, 6);
 
 $nearby_count = count($nearby_items);
@@ -2176,7 +2224,7 @@ function halkidiki_ai_planner_shortcode() {
 }
 </style>
 
-        <div id="halkidiki-ai-chat-box" style="height: 500px; overflow-y: auto; padding: 24px; background: #fcfcfd;">
+        <div id="halkidiki-ai-chat-box" data-testid="halkidiki-ai-chat-box" style="height: 500px; overflow-y: auto; padding: 24px; background: #fcfcfd;">
             <div style="display: flex; margin-bottom: 16px;">
                 <div style="max-width: 78%; background: #f3f4f6; color: #111827; border-radius: 18px 18px 18px 6px; padding: 14px 16px; line-height: 1.6; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
                     <strong style="display:block; margin-bottom:6px;">Halkidiki Bot</strong>
@@ -2196,13 +2244,13 @@ function halkidiki_ai_planner_shortcode() {
             <div style="display: flex; gap: 12px; align-items: stretch;">
                 <input
                     type="text"
-                    id="halkidiki-ai-user-input"
+                    id="halkidiki-ai-user-input" data-testid="halkidiki-ai-input"
                     placeholder="Π.χ. Θέλω brunch στο Πευκοχώρι και μετά μια κοντινή παραλία"
                     style="flex: 1; padding: 16px 18px; border: 1px solid #d1d5db; border-radius: 14px; background: #fff; font-size: 15px; outline: none; box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);"
                 />
                 <button
                     type="button"
-                    id="halkidiki-ai-send-btn"
+                    id="halkidiki-ai-send-btn" data-testid="halkidiki-ai-send"
                     style="padding: 0 22px; min-width: 132px; border: none; border-radius: 14px; cursor: pointer; background: linear-gradient(135deg, #b08a3c 0%, #d4af5f 100%); color: #fff; font-weight: 700; font-size: 15px; box-shadow: 0 8px 18px rgba(176,138,60,0.25);"
                 >
                     Αποστολή
@@ -2226,11 +2274,13 @@ function halkidiki_ai_planner_shortcode() {
 
         function appendMessage(sender, text, alignRight = false, isError = false, businesses = []) {
     const row = document.createElement('div');
+    row.setAttribute('data-testid', 'halkidiki-ai-message');
     row.style.display = 'flex';
     row.style.marginBottom = '16px';
     row.style.justifyContent = alignRight ? 'flex-end' : 'flex-start';
 
     const bubble = document.createElement('div');
+    bubble.setAttribute('data-testid', alignRight ? 'halkidiki-ai-message' : 'halkidiki-ai-reply');
     bubble.style.maxWidth = '78%';
     bubble.style.padding = '14px 16px';
     bubble.style.lineHeight = '1.7';
