@@ -1055,7 +1055,7 @@ function halkidiki_ai_filter_brunch_two_step($items) {
     };
     $brunch_exact = [];
     foreach ($items as $item) {
-        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []));
+        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []), [(string)($item['name'] ?? ''), (string)($item['description'] ?? '')]);
         $h = halkidiki_ai_normalize_text(implode(' ', $parts));
         if ($contains_any($h, ['Brunch', 'all day brunch', 'brunch spot'])) {
             $brunch_exact[] = $item;
@@ -1064,9 +1064,11 @@ function halkidiki_ai_filter_brunch_two_step($items) {
     if (!empty($brunch_exact)) return array_values($brunch_exact);
     $fallback = [];
     foreach ($items as $item) {
-        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []));
+        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []), [(string)($item['name'] ?? ''), (string)($item['description'] ?? '')]);
         $h = halkidiki_ai_normalize_text(implode(' ', $parts));
-        if ($contains_any($h, ['Cafe-Snacks', 'Cafe Snacks', 'Cafe & Cocktail', 'Cafe & Coctail'])) {
+        $is_brunch_like = $contains_any($h, ['Cafe-Snacks', 'Cafe Snacks', 'Cafe & Cocktail', 'Cafe & Coctail', 'breakfast', 'πρωινο', 'κρεπα', 'crepe', 'pancake', 'waffle']);
+        $is_wrong_type = $contains_any($h, ['seafood', 'ταβερν', 'εστιατορ', 'restaurant', 'gyros', 'grill', 'burger', 'pizza']);
+        if ($is_brunch_like && !$is_wrong_type) {
             $fallback[] = $item;
         }
     }
@@ -1376,9 +1378,10 @@ $description = wp_trim_words($description, 18, '...');
 
 $exact_items = $hydrate_posts($exact_ids, 'exact', $requested_region_name);
 $debug['exact_candidates_before_filter'] = $exact_items;
-$exact_items = halkidiki_ai_filter_businesses_by_intent($exact_items, $intent);
 if (($intent['type'] ?? '') === 'brunch') {
     $exact_items = halkidiki_ai_filter_brunch_two_step($exact_items);
+} else {
+    $exact_items = halkidiki_ai_filter_businesses_by_intent($exact_items, $intent);
 }
 $debug['exact_candidates_after_filter'] = $exact_items;
 $before_names = array_map(function($i){ return $i['name'] ?? ''; }, $debug['exact_candidates_before_filter']);
@@ -1407,9 +1410,10 @@ $exact_count = count($exact_items);
             $nearby_ids = !empty($nearby_term_ids) ? $run_query($nearby_term_ids, 200, $used_post_ids) : [];
 
 $nearby_items = $hydrate_posts($nearby_ids, 'nearby', $requested_region_name);
-$nearby_items = halkidiki_ai_filter_businesses_by_intent($nearby_items, $intent);
 if (($intent['type'] ?? '') === 'brunch') {
     $nearby_items = halkidiki_ai_filter_brunch_two_step($nearby_items);
+} else {
+    $nearby_items = halkidiki_ai_filter_businesses_by_intent($nearby_items, $intent);
 }
 $nearby_items = array_values(array_filter($nearby_items, function($item) use ($nearby_region_names) {
     $dr = $item['display_region'] ?? '';
