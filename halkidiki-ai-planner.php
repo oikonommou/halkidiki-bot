@@ -1044,11 +1044,17 @@ function halkidiki_ai_rotate_businesses_deterministic($items, $seed_parts) {
 
 function halkidiki_ai_filter_brunch_two_step($items) {
     if (empty($items)) return [];
+    $contains_any = function($text, $needles) {
+        foreach ($needles as $n) {
+            if (strpos($text, halkidiki_ai_normalize_text($n)) !== false) return true;
+        }
+        return false;
+    };
     $brunch_exact = [];
     foreach ($items as $item) {
         $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []));
         $h = halkidiki_ai_normalize_text(implode(' ', $parts));
-        if (strpos($h, halkidiki_ai_normalize_text('Brunch')) !== false) {
+        if ($contains_any($h, ['Brunch', 'all day brunch', 'brunch spot'])) {
             $brunch_exact[] = $item;
         }
     }
@@ -1057,7 +1063,7 @@ function halkidiki_ai_filter_brunch_two_step($items) {
     foreach ($items as $item) {
         $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []));
         $h = halkidiki_ai_normalize_text(implode(' ', $parts));
-        if (strpos($h, halkidiki_ai_normalize_text('Cafe-Snacks')) !== false) {
+        if ($contains_any($h, ['Cafe-Snacks', 'Cafe Snacks', 'Cafe & Cocktail', 'Cafe & Coctail'])) {
             $fallback[] = $item;
         }
     }
@@ -1684,27 +1690,24 @@ function halkidiki_ai_build_planner_reply_clean($message, $pending_context = [])
     $dataset_ctx = halkidiki_ai_build_planner_dataset_context($dataset, $region_name);
     $beach = $dataset['about_the_area']['beaches'][0]['name'] ?? '';
     $attr = $dataset['about_the_area']['attractions'][0]['name'] ?? ($dataset['about_the_area']['archaeological_sites'][0]['name'] ?? '');
-    $reply = "Βεβαίως! Για μια όμορφη μέρα στο {$region_name}, θα σας πρότεινα:\n\nΠρωί:\n";
+    $reply = "Τέλεια, πάμε να το οργανώσουμε όμορφα για {$region_name}. ";
     if ($beach !== '') {
-        $reply .= "Ξεκινήστε με παραλία, ιδανικά προς {$beach}, και έναν χαλαρό καφέ στην περιοχή.\n\n";
+        $reply .= "Το πρωί ξεκινήστε χαλαρά με καφέ και κατεύθυνση προς {$beach}, για ήρεμο μπάνιο και βόλτα στην παραλία. ";
     } else {
-        $reply .= "Ξεκινήστε με χαλαρή βόλτα και καφέ στην περιοχή.\n\n";
+        $reply .= "Το πρωί ξεκινήστε με χαλαρή βόλτα και καφέ στο χωριό. ";
     }
-    $reply .= "Μεσημέρι:\n";
-    $reply .= !empty($food_names) ? ('Για φαγητό μπορείτε να δείτε: ' . implode(', ', $food_names) . ".\n\n") : "Συνεχίστε με παραλία και ένα ήρεμο γεύμα στην περιοχή.\n\n";
-    $reply .= "Απόγευμα:\n";
+    $reply .= !empty($food_names) ? ('Για μεσημεριανό, πολύ ταιριαστές επιλογές είναι τα ' . implode(' και ', $food_names) . '. ') : "Στο μεσημέρι προτείνω ένα ήρεμο γεύμα κοντά στη θάλασσα και μικρή ξεκούραση. ";
     if ($attr !== '') {
-        $reply .= "Κάντε βόλτα και προσθέστε ένα σημείο ενδιαφέροντος όπως {$attr}.";
+        $reply .= "Το απόγευμα αξίζει βόλτα και μια στάση σε σημείο ενδιαφέροντος όπως {$attr}, ιδανικά την ώρα που πέφτει ο ήλιος. ";
     } else {
-        $reply .= "{$dataset_ctx}";
+        $reply .= "Το απόγευμα {$dataset_ctx} ";
     }
-    $reply .= "\n\nΒράδυ:\n";
-    $reply .= !empty($drink_names) ? ('Για ποτό μπορείτε να δείτε: ' . implode(', ', $drink_names) . '.') : 'Κλείστε τη μέρα με μια χαλαρή βόλτα και ποτό στην περιοχή.';
-    if ($style !== '') $reply .= "\n\nΈλαβα υπόψη και την προτίμησή σας για: {$style}.";
+    $reply .= !empty($drink_names) ? ('Το βράδυ για ποτό δείτε το ' . implode(' ή το ', $drink_names) . ', για πιο χαλαρό κλείσιμο της μέρας.') : 'Το βράδυ κλείστε με χαλαρό ποτό και βόλτα στον κεντρικό πεζόδρομο.';
+    if ($style !== '') $reply .= " Έλαβα υπόψη και την προτίμησή σας για {$style} ύφος.";
     if (empty($planner_answers['group']) || !isset($planner_answers['car'])) {
-        $reply .= "\n\nΑν θέλετε, πείτε μου και αν έχετε αυτοκίνητο ή αν προτιμάτε πιο ζωντανή/πιο ήρεμη ροή, για να το κάνω ακόμη πιο ταιριαστό.";
+        $reply .= " Αν θέλετε, πείτε μου αν έχετε αυτοκίνητο και αν το θέλετε πιο ζωντανό ή πιο ήρεμο, για να το ράψω ακριβώς στα μέτρα σας.";
     }
-    $reply .= "\n\nΑν θέλετε, μπορώ να το κάνω και πιο χαλαρό, πιο οικογενειακό ή πιο βραδινό.";
+    $reply .= " Αν θέλετε, στο επόμενο μήνυμα σας το κάνω πιο ρομαντικό, πιο οικογενειακό ή πιο nightlife.";
     return ['reply' => $reply, 'pending' => ['pending_region' => '', 'pending_intent' => '', 'planner_answers' => []]];
 }
 
