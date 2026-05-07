@@ -683,11 +683,14 @@ function halkidiki_ai_detect_business_intent($message) {
 
     if (
         strpos($normalized, 'brunch') !== false ||
+        strpos($normalized, 'μπραντσ') !== false ||
+        strpos($normalized, 'μπραντς') !== false ||
+        strpos($normalized, 'μπραντ') !== false ||
         strpos($normalized, 'breakfast') !== false ||
         strpos($normalized, 'πρωιν') !== false
     ) {
         $intent['type'] = 'brunch';
-        $intent['category_keywords'] = ['Brunch', 'Cafe-Snacks'];
+        $intent['category_keywords'] = ['Brunch', 'Cafe-Snacks', 'Cafe Snacks', 'Breakfast', 'All Day Breakfast'];
         return $intent;
     }
 
@@ -923,6 +926,29 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
         return $items;
     }
 
+    $strict_rules = [
+        'food' => [
+            'allow' => ['εστιατορ', 'ταβερν', 'fast food', 'pizza', 'pasta', 'snack', 'food', 'grill', 'gyros', 'seafood', 'burger'],
+            'deny'  => ['bar', 'club', 'hotel', 'villa', 'apartments', 'beach', 'cruise', 'rent', 'water sport'],
+        ],
+        'brunch' => [
+            'allow' => ['brunch', 'cafe-snacks', 'cafe snacks', 'breakfast', 'all day breakfast', 'πρωιν', 'κρεπα', 'crepe', 'waffle', 'pancake'],
+            'deny'  => ['ταβερν', 'εστιατορ', 'restaurant', 'bar', 'club', 'hotel', 'beach', 'seafood', 'grill', 'gyros'],
+        ],
+        'coffee' => [
+            'allow' => ['cafe', 'coffee', 'cafe-snack', 'cafe & coctail', 'cafe & cocktail'],
+            'deny'  => ['ταβερν', 'εστιατορ', 'restaurant', 'club', 'hotel', 'beach', 'rent'],
+        ],
+        'drink' => [
+            'allow' => ['bar', 'bars', 'club', 'clubs', 'beach bar', 'cocktail', 'coctail', 'nightlife', 'cafe & cocktail', 'cafe & coctail'],
+            'deny'  => ['ταβερν', 'εστιατορ', 'restaurant', 'gyros', 'hotel', 'beach'],
+        ],
+        'nightlife' => [
+            'allow' => ['bar', 'bars', 'club', 'clubs', 'beach bar', 'cocktail', 'coctail', 'nightlife', 'cafe & cocktail', 'cafe & coctail'],
+            'deny'  => ['ταβερν', 'εστιατορ', 'restaurant', 'gyros', 'hotel', 'beach'],
+        ],
+    ];
+
     $filtered = [];
 
     foreach ($items as $item) {
@@ -936,23 +962,117 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
             $haystack_parts = array_merge($haystack_parts, $item['features']);
         }
 
-        $haystack = halkidiki_ai_normalize_text(implode(' ', $haystack_parts));
+        $tax_haystack = halkidiki_ai_normalize_text(implode(' ', $haystack_parts));
+        $extra_text = [];
+        if (!empty($item['name'])) $extra_text[] = $item['name'];
+        if (!empty($item['description'])) $extra_text[] = $item['description'];
+        $haystack = halkidiki_ai_normalize_text(implode(' ', array_merge($haystack_parts, $extra_text)));
 
         if ($haystack === '') {
             continue;
         }
 
+        $matched = false;
         foreach ($keywords as $keyword) {
             $keyword_norm = halkidiki_ai_normalize_text($keyword);
 
             if ($keyword_norm !== '' && strpos($haystack, $keyword_norm) !== false) {
-                $filtered[] = $item;
+                $matched = true;
                 break;
             }
         }
+
+        if (!$matched) {
+            continue;
+        }
+
+        $intent_type = (string) ($intent['type'] ?? '');
+        if (!empty($strict_rules[$intent_type])) {
+            $rule = $strict_rules[$intent_type];
+            $allow_ok = false;
+            foreach ($rule['allow'] as $allow_kw) {
+                $allow_target = ($intent_type === 'drink' || $intent_type === 'nightlife') ? $tax_haystack : $haystack;
+                if (strpos($allow_target, halkidiki_ai_normalize_text($allow_kw)) !== false) {
+                    $allow_ok = true;
+                    break;
+                }
+            }
+            if (!$allow_ok) {
+                continue;
+            }
+            $deny_hit = false;
+            foreach ($rule['deny'] as $deny_kw) {
+                if (strpos($haystack, halkidiki_ai_normalize_text($deny_kw)) !== false) {
+                    $deny_hit = true;
+                    break;
+                }
+            }
+            if ($deny_hit) {
+                continue;
+            }
+            if ($intent_type === 'drink' || $intent_type === 'nightlife') {
+                $food_leak_words = ['εστιατορ', 'restaurant', 'seafood', 'ταβερν', 'pizza', 'fast food', 'gyros', 'burger'];
+                $food_leak = false;
+                foreach ($food_leak_words as $w) {
+                    if (strpos($tax_haystack, halkidiki_ai_normalize_text($w)) !== false) {
+                        $food_leak = true;
+                        break;
+                    }
+                }
+                if ($food_leak) {
+                    continue;
+                }
+            }
+        }
+
+        $filtered[] = $item;
     }
 
     return array_values($filtered);
+}
+
+function halkidiki_ai_rotate_businesses_deterministic($items, $seed_parts) {
+    if (empty($items) || count($items) <= 1) {
+        return $items;
+    }
+    $seed_input = is_array($seed_parts) ? implode('|', $seed_parts) : (string) $seed_parts;
+    $seed = abs(crc32(halkidiki_ai_normalize_text($seed_input)));
+    $count = count($items);
+    $offset = $count > 0 ? ($seed % $count) : 0;
+    if ($offset === 0) {
+        return $items;
+    }
+    return array_merge(array_slice($items, $offset), array_slice($items, 0, $offset));
+}
+
+function halkidiki_ai_filter_brunch_two_step($items) {
+    if (empty($items)) return [];
+    $contains_any = function($text, $needles) {
+        foreach ($needles as $n) {
+            if (strpos($text, halkidiki_ai_normalize_text($n)) !== false) return true;
+        }
+        return false;
+    };
+    $brunch_exact = [];
+    foreach ($items as $item) {
+        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []), [(string)($item['name'] ?? ''), (string)($item['description'] ?? '')]);
+        $h = halkidiki_ai_normalize_text(implode(' ', $parts));
+        if ($contains_any($h, ['Brunch', 'all day brunch', 'brunch spot'])) {
+            $brunch_exact[] = $item;
+        }
+    }
+    if (!empty($brunch_exact)) return array_values($brunch_exact);
+    $fallback = [];
+    foreach ($items as $item) {
+        $parts = array_merge((array)($item['categories'] ?? []), (array)($item['features'] ?? []), [(string)($item['name'] ?? ''), (string)($item['description'] ?? '')]);
+        $h = halkidiki_ai_normalize_text(implode(' ', $parts));
+        $is_brunch_like = $contains_any($h, ['Cafe-Snacks', 'Cafe Snacks', 'Cafe & Cocktail', 'Cafe & Coctail', 'breakfast', 'πρωινο', 'κρεπα', 'crepe', 'pancake', 'waffle']);
+        $is_wrong_type = $contains_any($h, ['seafood', 'ταβερν', 'εστιατορ', 'restaurant', 'gyros', 'grill', 'burger', 'pizza']);
+        if ($is_brunch_like && !$is_wrong_type) {
+            $fallback[] = $item;
+        }
+    }
+    return array_values($fallback);
 }
 
 function halkidiki_ai_debug_log($payload) {
@@ -1043,7 +1163,7 @@ function halkidiki_ai_get_filtered_businesses($message, $context = null) {
     $post_type = halkidiki_ai_get_listing_post_type();
     $taxes = halkidiki_ai_get_listing_taxonomies();
 
-    $business_cache_key = halkidiki_ai_make_cache_key('businesses_v10', ['message' => $message, 'context' => $context]);
+    $business_cache_key = halkidiki_ai_make_cache_key('businesses_v11', ['message' => $message, 'context' => $context]);
     $cached_businesses = halkidiki_ai_get_cached($business_cache_key);
 
     if ($cached_businesses !== false && is_array($cached_businesses)) {
@@ -1074,6 +1194,15 @@ function halkidiki_ai_get_filtered_businesses($message, $context = null) {
 
     $category_term_ids = halkidiki_ai_find_matching_term_ids($category_map, $intent['category_keywords']);
     $feature_term_ids = halkidiki_ai_find_matching_term_ids($feature_map, $intent['feature_keywords']);
+
+    // Important: for strict intents we do region-first retrieval and then apply PHP strict filtering.
+    // This avoids false negatives when taxonomy labels differ (e.g. Brunch/Cafe variants) and
+    // prevents missing valid partner listings because of overly narrow term-id prefiltering.
+    $strict_region_first_intents = ['brunch', 'drink', 'nightlife', 'coffee', 'food'];
+    if (in_array((string)($intent['type'] ?? ''), $strict_region_first_intents, true)) {
+        $category_term_ids = [];
+        $feature_term_ids = [];
+    }
 
     $find_region_term_ids = function($region_names) use ($region_map) {
         $ids = [];
@@ -1249,13 +1378,19 @@ $description = wp_trim_words($description, 18, '...');
 
 $exact_items = $hydrate_posts($exact_ids, 'exact', $requested_region_name);
 $debug['exact_candidates_before_filter'] = $exact_items;
-$exact_items = halkidiki_ai_filter_businesses_by_intent($exact_items, $intent);
+if (($intent['type'] ?? '') === 'brunch') {
+    $exact_items = halkidiki_ai_filter_brunch_two_step($exact_items);
+} else {
+    $exact_items = halkidiki_ai_filter_businesses_by_intent($exact_items, $intent);
+}
 $debug['exact_candidates_after_filter'] = $exact_items;
 $before_names = array_map(function($i){ return $i['name'] ?? ''; }, $debug['exact_candidates_before_filter']);
 $after_names = array_map(function($i){ return $i['name'] ?? ''; }, $debug['exact_candidates_after_filter']);
 $debug['exact_removed_by_intent_filter'] = array_values(array_diff($before_names, $after_names));
 $offset = is_array($context) ? (int) ($context['offset'] ?? 0) : 0;
 $exact_total = count($exact_items);
+$seed_date = gmdate('Y-m-d');
+$exact_items = halkidiki_ai_rotate_businesses_deterministic($exact_items, [$message, $requested_region_name, $intent['type'] ?? '', 'exact', $seed_date]);
 $exact_items = array_slice($exact_items, $offset, 6);
 
 $results = array_merge($results, $exact_items);
@@ -1275,7 +1410,11 @@ $exact_count = count($exact_items);
             $nearby_ids = !empty($nearby_term_ids) ? $run_query($nearby_term_ids, 200, $used_post_ids) : [];
 
 $nearby_items = $hydrate_posts($nearby_ids, 'nearby', $requested_region_name);
-$nearby_items = halkidiki_ai_filter_businesses_by_intent($nearby_items, $intent);
+if (($intent['type'] ?? '') === 'brunch') {
+    $nearby_items = halkidiki_ai_filter_brunch_two_step($nearby_items);
+} else {
+    $nearby_items = halkidiki_ai_filter_businesses_by_intent($nearby_items, $intent);
+}
 $nearby_items = array_values(array_filter($nearby_items, function($item) use ($nearby_region_names) {
     $dr = $item['display_region'] ?? '';
     if ($dr === '') return false;
@@ -1285,6 +1424,7 @@ $nearby_items = array_values(array_filter($nearby_items, function($item) use ($n
     return false;
 }));
 $debug['nearby_candidates_after_filter'] = $nearby_items;
+$nearby_items = halkidiki_ai_rotate_businesses_deterministic($nearby_items, [$message, $requested_region_name, $intent['type'] ?? '', 'nearby', $seed_date]);
 $nearby_items = array_slice($nearby_items, $offset, 6);
 
 $nearby_count = count($nearby_items);
@@ -1450,21 +1590,26 @@ function halkidiki_ai_format_business_reply_clean($resolved, $data) {
     if ($resolved['final_region'] !== '' && $resolved['final_intent'] === '') return 'Τι είδους επιλογή ψάχνετε στο/στην ' . $resolved['final_region'] . '; φαγητό, καφέ, ποτό, brunch ή κάτι άλλο;';
     if ($resolved['final_region'] === '' && $resolved['final_intent'] === '') return 'Μπορείτε να μου πείτε περιοχή και τι ακριβώς θέλετε (π.χ. καφέ, φαγητό), για να σας δείξω σωστές επιλογές;';
     $items = $data['businesses'] ?? [];
-    if (empty($items)) return 'Δεν βρήκα διαθέσιμες συνεργαζόμενες επιλογές για αυτό που ζητάτε.';
+    if (empty($items)) return 'Αυτή τη στιγμή δεν εμφανίζονται ακριβείς συνεργαζόμενες επιλογές για αυτό το φίλτρο. Αν θέλετε, μπορώ αμέσως να το ανοίξω σε κοντινά χωριά της ίδιας περιοχής ή να το προσαρμόσουμε λίγο για να σας δείξω ταιριαστές επιλογές.';
     $lines = [];
     if (($data['exact_total'] ?? 0) > 0) {
         $lines[] = 'Για αυτό που αναζητάτε στο ' . $resolved['final_region'] . ', μπορείτε να δείτε:';
     } else {
         $lines[] = 'Στην ' . $resolved['final_region'] . ' δεν βρήκα ακριβώς ταιριαστές συνεργαζόμενες επιλογές, αλλά μπορείτε να δείτε κοντινές επιλογές:';
     }
+    $chunks = [];
     foreach (array_slice($items, 0, 6) as $b) {
         $name = html_entity_decode((string)($b['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $desc = halkidiki_ai_clean_business_description($b, $resolved['final_intent'] ?? '', $resolved['final_region'] ?? '');
         if (($b['match_scope'] ?? '') === 'nearby') {
-            $lines[] = '- Κοντινή επιλογή στην ' . ($b['display_region'] ?? '') . ': ' . $name . ' — ' . $desc;
+            $chunks[] = 'Κοντινή επιλογή στην ' . ($b['display_region'] ?? '') . ': ' . $name . ' — ' . $desc;
         } else {
-            $lines[] = '- ' . $name . ' — ' . $desc;
+            $chunks[] = $name . ' — ' . $desc;
         }
+    }
+    if (!empty($chunks)) {
+        $lines[] = implode(' Επίσης, ', $chunks) . '.';
+        $lines[] = 'Αν θέλετε, μπορώ να σας το προσαρμόσω πιο πολύ σε ύφος παρέας, ζευγαριού ή πιο χαλαρής εξόδου.';
     }
     return implode("\n", $lines);
 }
@@ -1492,7 +1637,10 @@ function halkidiki_ai_clean_business_description($business, $intent, $region) {
 
 function halkidiki_ai_detect_smalltalk($message) {
     $n = halkidiki_ai_normalize_text($message);
-    $patterns = ['γεια','γεια σου','γεια σας','καλημερα','καλησπερα','ευχαριστω','ευχαριστω πολυ','τελεια','οκ','okay','thanks','thank you'];
+    $trimmed = trim($n);
+    $short_smalltalk = ['γεια','γεια σου','γεια σας','καλημερα','καλησπερα','ευχαριστω','ευχαριστω πολυ','τελεια','οκ','okay','thanks','thank you'];
+    if (in_array($trimmed, $short_smalltalk, true)) return true;
+    $patterns = ['ευχαριστω', 'thanks', 'thank you'];
     foreach ($patterns as $p) {
         if (strpos($n, $p) !== false) return true;
     }
@@ -1522,7 +1670,7 @@ function halkidiki_ai_build_planner_dataset_context($dataset, $region = '') {
             $parts[] = $label . ': ' . implode(', ', array_filter($names));
         }
     }
-    if (empty($parts)) return 'Υπάρχουν περιορισμένα διαθέσιμα δεδομένα περιοχής.';
+    if (empty($parts)) return 'Για το απόγευμα προτείνω βόλτα σε κοντινή παραλία, στάση για φωτογραφίες σε σημείο με θέα και χαλαρό περίπατο στο κέντρο του χωριού.';
     return implode(' | ', $parts);
 }
 
@@ -1534,8 +1682,22 @@ function halkidiki_ai_build_planner_reply_clean($message, $pending_context = [])
     $intent = halkidiki_ai_detect_intent_clean($message);
     $region_name = $region['name'] ?? '';
     $style = $intent['type'] ?? '';
+    if ($region_name === '' && !empty($pending_context['pending_region'])) {
+        $region_name = $pending_context['pending_region'];
+    }
+    $planner_answers = isset($pending_context['planner_answers']) && is_array($pending_context['planner_answers']) ? $pending_context['planner_answers'] : [];
+    $msg_norm = halkidiki_ai_normalize_text($message);
+    if (strpos($msg_norm, 'αυτοκιν') !== false || strpos($msg_norm, 'car') !== false) $planner_answers['car'] = true;
+    if (strpos($msg_norm, 'χωρις αυτοκιν') !== false || strpos($msg_norm, 'χωρίς αυτοκιν') !== false || strpos($msg_norm, 'without car') !== false) $planner_answers['car'] = false;
+    if (strpos($msg_norm, 'χαλαρ') !== false) $planner_answers['style'] = 'relaxed';
+    if (strpos($msg_norm, 'οικογεν') !== false || strpos($msg_norm, 'kids') !== false) $planner_answers['group'] = 'family';
+
+    if (strpos($msg_norm, 'ζευγαρ') !== false || strpos($msg_norm, 'couple') !== false) $planner_answers['group'] = 'couple';
+    if (strpos($msg_norm, 'παρεα') !== false || strpos($msg_norm, 'friends') !== false) $planner_answers['group'] = 'friends';
+    if (strpos($msg_norm, 'παραλι') !== false || strpos($msg_norm, 'beach') !== false) $planner_answers['style'] = 'beach';
+
     if ($region_name === '') {
-        return ['reply' => 'Από ποια περιοχή ξεκινάτε και τι ύφος θέλετε; παραλία, φαγητό, βόλτα ή βραδινή έξοδο;', 'pending' => ['pending_region' => '', 'pending_intent' => '']];
+        return ['reply' => 'Πείτε μου μόνο από ποια περιοχή ξεκινάτε και αναλαμβάνω τα υπόλοιπα. Αν δεν μου δώσετε άλλο στοιχείο, θα σας ετοιμάσω εγώ μια ισορροπημένη πρόταση ημέρας με παραλία, φαγητό και βραδινή ιδέα.', 'pending' => ['pending_region' => '', 'pending_intent' => 'planner', 'planner_answers' => $planner_answers]];
     }
     $food = halkidiki_ai_query_businesses_clean($region_name, 'food');
     $drink = halkidiki_ai_query_businesses_clean($region_name, 'drink');
@@ -1544,25 +1706,25 @@ function halkidiki_ai_build_planner_reply_clean($message, $pending_context = [])
     $dataset_ctx = halkidiki_ai_build_planner_dataset_context($dataset, $region_name);
     $beach = $dataset['about_the_area']['beaches'][0]['name'] ?? '';
     $attr = $dataset['about_the_area']['attractions'][0]['name'] ?? ($dataset['about_the_area']['archaeological_sites'][0]['name'] ?? '');
-    $reply = "Βεβαίως! Για μια όμορφη μέρα στο {$region_name}, θα σας πρότεινα:\n\nΠρωί:\n";
+    $reply = "Τέλεια, πάμε να το οργανώσουμε όμορφα για {$region_name}. ";
     if ($beach !== '') {
-        $reply .= "Ξεκινήστε με παραλία, ιδανικά προς {$beach}, και έναν χαλαρό καφέ στην περιοχή.\n\n";
+        $reply .= "Το πρωί ξεκινήστε χαλαρά με καφέ και κατεύθυνση προς {$beach}, για ήρεμο μπάνιο και βόλτα στην παραλία. ";
     } else {
-        $reply .= "Ξεκινήστε με χαλαρή βόλτα και καφέ στην περιοχή.\n\n";
+        $reply .= "Το πρωί ξεκινήστε με χαλαρή βόλτα και καφέ στο χωριό. ";
     }
-    $reply .= "Μεσημέρι:\n";
-    $reply .= !empty($food_names) ? ('Για φαγητό μπορείτε να δείτε: ' . implode(', ', $food_names) . ".\n\n") : "Συνεχίστε με παραλία και ένα ήρεμο γεύμα στην περιοχή.\n\n";
-    $reply .= "Απόγευμα:\n";
+    $reply .= !empty($food_names) ? ('Για μεσημεριανό, πολύ ταιριαστές επιλογές είναι τα ' . implode(' και ', $food_names) . '. ') : "Στο μεσημέρι προτείνω ένα ήρεμο γεύμα κοντά στη θάλασσα και μικρή ξεκούραση. ";
     if ($attr !== '') {
-        $reply .= "Κάντε βόλτα και προσθέστε ένα σημείο ενδιαφέροντος όπως {$attr}.";
+        $reply .= "Το απόγευμα αξίζει βόλτα και μια στάση σε σημείο ενδιαφέροντος όπως {$attr}, ιδανικά την ώρα που πέφτει ο ήλιος. ";
     } else {
-        $reply .= "{$dataset_ctx}";
+        $reply .= "Το απόγευμα {$dataset_ctx} ";
     }
-    $reply .= "\n\nΒράδυ:\n";
-    $reply .= !empty($drink_names) ? ('Για ποτό μπορείτε να δείτε: ' . implode(', ', $drink_names) . '.') : 'Κλείστε τη μέρα με μια χαλαρή βόλτα και ποτό στην περιοχή.';
-    if ($style !== '') $reply .= "\n\nΈλαβα υπόψη και την προτίμησή σας για: {$style}.";
-    $reply .= "\n\nΑν θέλετε, μπορώ να το κάνω και πιο χαλαρό, πιο οικογενειακό ή πιο βραδινό.";
-    return ['reply' => $reply, 'pending' => ['pending_region' => '', 'pending_intent' => '']];
+    $reply .= !empty($drink_names) ? ('Το βράδυ για ποτό δείτε το ' . implode(' ή το ', $drink_names) . ', για πιο χαλαρό κλείσιμο της μέρας.') : 'Το βράδυ κλείστε με χαλαρό ποτό και βόλτα στον κεντρικό πεζόδρομο.';
+    if ($style !== '') $reply .= " Έλαβα υπόψη και την προτίμησή σας για {$style} ύφος.";
+    if (empty($planner_answers['group']) || !isset($planner_answers['car'])) {
+        $reply .= " Αν θέλετε, πείτε μου αν έχετε αυτοκίνητο και αν το θέλετε πιο ζωντανό ή πιο ήρεμο, για να το ράψω ακριβώς στα μέτρα σας.";
+    }
+    $reply .= " Αν θέλετε, στο επόμενο μήνυμα σας το κάνω πιο ρομαντικό, πιο οικογενειακό ή πιο nightlife.";
+    return ['reply' => $reply, 'pending' => ['pending_region' => '', 'pending_intent' => '', 'planner_answers' => []]];
 }
 
 function halkidiki_ai_resolve_route_clean($message, $pending_context, $planner_context) {
@@ -1577,14 +1739,7 @@ function halkidiki_ai_resolve_route_clean($message, $pending_context, $planner_c
         return $route;
     }
     if (halkidiki_ai_detect_planner_request($message)) {
-        $taxes = halkidiki_ai_get_listing_taxonomies();
-        $region_map = halkidiki_ai_get_taxonomy_terms_map($taxes['region']);
-        $region = halkidiki_ai_detect_region_clean($message, $region_map);
-        if (!empty($region['name'])) {
-            $route['route'] = 'planner_reply';
-            return $route;
-        }
-        $route['route'] = 'planner_clarification';
+        $route['route'] = 'planner_reply';
         $route['plannerContext'] = ['active'=>true,'type'=>'day_plan'];
         return $route;
     }
@@ -2027,7 +2182,8 @@ function halkidiki_ai_chat_endpoint(WP_REST_Request $request) {
             $planner = halkidiki_ai_build_planner_reply_clean($message, $pending_context);
             $reply = $planner['reply'];
             $out_pending = $planner['pending'];
-            $out_planner = ['active'=>false,'type'=>''];
+            $needs_more_planner_input = !empty($out_pending['pending_intent']) && $out_pending['pending_intent'] === 'planner';
+            $out_planner = $needs_more_planner_input ? ['active'=>true,'type'=>'day_plan'] : ['active'=>false,'type'=>''];
             break;
         case 'business_clarification':
         case 'business_reply':
