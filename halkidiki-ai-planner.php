@@ -1193,6 +1193,15 @@ function halkidiki_ai_get_filtered_businesses($message, $context = null) {
     $category_term_ids = halkidiki_ai_find_matching_term_ids($category_map, $intent['category_keywords']);
     $feature_term_ids = halkidiki_ai_find_matching_term_ids($feature_map, $intent['feature_keywords']);
 
+    // Important: for strict intents we do region-first retrieval and then apply PHP strict filtering.
+    // This avoids false negatives when taxonomy labels differ (e.g. Brunch/Cafe variants) and
+    // prevents missing valid partner listings because of overly narrow term-id prefiltering.
+    $strict_region_first_intents = ['brunch', 'drink', 'nightlife', 'coffee', 'food'];
+    if (in_array((string)($intent['type'] ?? ''), $strict_region_first_intents, true)) {
+        $category_term_ids = [];
+        $feature_term_ids = [];
+    }
+
     $find_region_term_ids = function($region_names) use ($region_map) {
         $ids = [];
 
