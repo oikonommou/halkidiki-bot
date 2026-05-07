@@ -683,11 +683,14 @@ function halkidiki_ai_detect_business_intent($message) {
 
     if (
         strpos($normalized, 'brunch') !== false ||
+        strpos($normalized, 'μπραντσ') !== false ||
+        strpos($normalized, 'μπραντς') !== false ||
+        strpos($normalized, 'μπραντ') !== false ||
         strpos($normalized, 'breakfast') !== false ||
         strpos($normalized, 'πρωιν') !== false
     ) {
         $intent['type'] = 'brunch';
-        $intent['category_keywords'] = ['Brunch', 'Cafe-Snacks'];
+        $intent['category_keywords'] = ['Brunch', 'Cafe-Snacks', 'Cafe Snacks', 'Breakfast', 'All Day Breakfast'];
         return $intent;
     }
 
@@ -929,8 +932,8 @@ function halkidiki_ai_filter_businesses_by_intent($items, $intent) {
             'deny'  => ['bar', 'club', 'hotel', 'villa', 'apartments', 'beach', 'cruise', 'rent', 'water sport'],
         ],
         'brunch' => [
-            'allow' => ['brunch', 'cafe-snacks'],
-            'deny'  => ['ταβερν', 'εστιατορ', 'restaurant', 'bar', 'club', 'hotel', 'beach'],
+            'allow' => ['brunch', 'cafe-snacks', 'cafe snacks', 'breakfast', 'all day breakfast', 'πρωιν', 'κρεπα', 'crepe', 'waffle', 'pancake'],
+            'deny'  => ['ταβερν', 'εστιατορ', 'restaurant', 'bar', 'club', 'hotel', 'beach', 'seafood', 'grill', 'gyros'],
         ],
         'coffee' => [
             'allow' => ['cafe', 'coffee', 'cafe-snack', 'cafe & coctail', 'cafe & cocktail'],
